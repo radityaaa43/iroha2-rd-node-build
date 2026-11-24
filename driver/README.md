@@ -18,6 +18,7 @@ Tests:
 | `src/envelope.rs` unit tests | round trip, layout lengths, binding mismatch, wrong key, tamper, malformed input |
 | `tests/envelope_vectors.rs` | `tests/vectors/envelope_v1.json` is what the code produces (S1 tests the node parser against it). Regenerate with the command above |
 | `tests/offline_prover.rs` | no node: issue 250 to A, A sends 100 to B with change, B unshields 100. Real proofs, envelope in `OpenVerifyEnvelope.aux` (proof still verifies), recipient scan, BI audit clean, and BI detects a lying envelope, a missing envelope and a forged signer |
+| `tests/wallet_cli.rs` | keygen writes a loadable wallet, `parties.json` parsing (audit key choice, address, asset names), note selection |
 
 ## Commands
 
