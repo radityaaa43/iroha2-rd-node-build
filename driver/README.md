@@ -41,6 +41,8 @@ Every command prints one line `result_json=<json>`; on failure `result_json={"er
 | `dvp submit --trade trade.json` | seller or buyer | needs both intents; verifies them, submits one `ConfidentialDvp` (my account is the transaction authority), waits, prints the tx hash or the node's `rd-dvp:` error |
 | `award sign --award-id <hex32\|auto> --winner <party> --instrument dfabi_2026_01 --quantity Q --consideration P --expiry-height H --out award.json` | BI | signs the UC-03 award record with the `bi` account key (the node wants the owner of domain `rd`) |
 | `negative --asset rd --other-asset dfabi_2026_01 --to bank-b` | bank | submits the attacks below and prints `expected` vs `got` per case |
+| `bench --asset rd --to bank-b,bank-c [--stages 1,2,4,8] [--stage-secs 120] [--warmup-secs 60] [--start-at <unix s>] --out bench.jsonl [--public] [--amount 1]` | bank | closed-loop transfer load (2.6 ladder): one worker per note, each spends its own chain (amount to the next recipient, change to itself); a block-stream thread keeps the leaf list current. One JSON line per attempt (`step`, `submit_ms`, `done_ms`, `prove_ms`, `ok`, `err`). `--public` sends a transparent `Transfer` instead. Needs one unspent note per worker; keeps each chain's last change note in `notes.json` |
+| `mint-public --asset rd --to <party> --amount N` | BI | public (transparent) balance for `bench --public` |
 
 `negative` builds one valid proof and mutates it, so it needs one unspent note (and one spent note for the replay case):
 
