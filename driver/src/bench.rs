@@ -148,17 +148,17 @@ pub fn bench(c: &Ctx, a: &BenchArgs) -> Result<Value> {
     let me_id = chain::own_account(&c.me)?;
     let recipients = a.to.iter().map(|t| Ok((t.clone(), c.parties.account_id(t)?))).collect::<Result<Vec<_>>>()?;
 
-    thread::scope(|s| {
-        for (w, note) in (0..max_c).map(|w| (w, notes.get(w).cloned())) {
+    let finals: Vec<Option<NoteRec>> = thread::scope(|s| {
+        let hs: Vec<_> = (0..max_c).map(|w| (w, notes.get(w).cloned())).map(|(w, note)| {
             let (client, a, sink, ledger, recipients, asset, def, me_acct, me_id) =
                 (net.client.clone(), &a, &sink, &ledger, &recipients, &asset, &def, &me_acct, &me_id);
-            s.spawn(move || {
+            s.spawn(move || -> Option<NoteRec> {
                 let mut note = note;
                 let mut k = w;
                 loop {
                     let now = now_ms();
                     if now >= end_ms {
-                        return;
+                        return note;
                     }
                     let Some(step) = step_at(a, now) else {
                         thread::sleep(Duration::from_millis(100));
@@ -222,7 +222,7 @@ pub fn bench(c: &Ctx, a: &BenchArgs) -> Result<Value> {
                                 }
                                 if ch.leaf_index.is_none() {
                                     sink.put(&json!({"party": c.me.party, "worker": w, "stop": "change note has no leaf after 60 s"}));
-                                    return;
+                                    return None;
                                 }
                                 note = Some(ch);
                             }
@@ -235,15 +235,32 @@ pub fn bench(c: &Ctx, a: &BenchArgs) -> Result<Value> {
                             // a spent or exhausted note cannot be retried; anything else (timeout, transient) can
                             if msg.contains("duplicate nullifier") || msg.contains("note exhausted") || msg.contains("no note") {
                                 sink.put(&json!({"party": c.me.party, "worker": w, "stop": msg}));
-                                return;
+                                return note;
                             }
                             thread::sleep(Duration::from_millis(200));
                         }
                     }
                 }
-            });
-        }
+            })
+        }).collect();
+        hs.into_iter().map(|h| h.join().ok().flatten()).collect()
     });
+
+    // keep each chain's last change note: it is not recoverable from the chain (TC-REC-01)
+    if !a.public {
+        let mut all = wallet::load_notes(&c.me.notes_path());
+        for n in &mut all {
+            if notes.iter().any(|u| u.commitment == n.commitment) && !finals.iter().flatten().any(|f| f.commitment == n.commitment) {
+                n.spent = true;
+            }
+        }
+        for f in finals.iter().flatten() {
+            if !all.iter().any(|n| n.commitment == f.commitment) {
+                all.push(f.clone());
+            }
+        }
+        wallet::save_notes(&c.me.notes_path(), &all)?;
+    }
 
     Ok(json!({
         "cmd": "bench", "asset": asset, "party": c.me.party, "public": a.public, "stages": a.stages,
