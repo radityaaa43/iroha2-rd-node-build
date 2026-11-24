@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       filter:
-        description: iroha_core test filter (default rd_)
-        default: rd_
+        description: iroha_core test filters, space-separated (default = our fork modules)
+        default: "rd_p1:: rd_disclosure:: rd_dvp::"
 permissions:
   contents: read
 concurrency:
@@ -66,6 +66,11 @@ jobs:
         run: cargo test --release --locked -p rd_driver -p rd_genesis
       - name: iroha_core fork tests
         working-directory: ${{ runner.temp }}/iroha
-        run: cargo test --release --locked -p iroha_core --lib "${{ inputs.filter || 'rd_' }}"
+        # Module paths, not a bare "rd_": that substring also matches upstream tests (e.g. "hard_stale").
+        env:
+          FILTERS: "${{ inputs.filter || 'rd_p1:: rd_disclosure:: rd_dvp::' }}"
+        run: |
+          # shellcheck disable=SC2086  # FILTERS is a space-separated list of test filters
+          cargo test --release --locked -p iroha_core --lib -- $FILTERS
       - name: shellcheck
         run: shellcheck -S warning image/build.sh ci/*.sh
