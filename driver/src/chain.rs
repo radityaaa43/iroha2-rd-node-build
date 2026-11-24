@@ -111,7 +111,7 @@ fn to_event(block: u64, tx: &iroha_data_model::transaction::SignedTransaction, i
     None
 }
 
-fn apply_block(ledger: &mut Ledger, b: &SignedBlock, asset: &AssetDefinitionId) {
+pub fn apply_block(ledger: &mut Ledger, b: &SignedBlock, asset: &AssetDefinitionId) {
     let height = b.header().height.get();
     let total = b.external_transactions().len();
     for (tx, result) in b.external_transactions().zip(b.results().take(total)) {
@@ -130,6 +130,11 @@ fn apply_block(ledger: &mut Ledger, b: &SignedBlock, asset: &AssetDefinitionId) 
 /// Replay the chain from block 1 to the current tip (blocks over the WebSocket stream).
 pub fn fetch_ledger(net: &Net, asset: &AssetDefinitionId) -> Result<Ledger> {
     let tip = net.client.get_status().wrap_err("status")?.blocks;
+    fetch_ledger_to(net, asset, tip)
+}
+
+/// Replay blocks 1..=`tip`.
+pub fn fetch_ledger_to(net: &Net, asset: &AssetDefinitionId, tip: u64) -> Result<Ledger> {
     let mut ledger = Ledger::default();
     if tip == 0 {
         return Ok(ledger);

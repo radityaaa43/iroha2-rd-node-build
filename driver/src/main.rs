@@ -107,6 +107,40 @@ enum Sub {
         #[command(subcommand)]
         cmd: AwardCmd,
     },
+    /// Closed-loop RD transfer load for the 2.6 ladder: one JSON line per attempt in --out (src/bench.rs).
+    Bench {
+        #[arg(long)]
+        asset: String,
+        /// Recipients, comma-separated, used round robin
+        #[arg(long, value_delimiter = ',', required = true)]
+        to: Vec<String>,
+        /// Concurrency of each step, comma-separated
+        #[arg(long, value_delimiter = ',', default_value = "1,2,4,8")]
+        stages: Vec<usize>,
+        #[arg(long, default_value_t = 120)]
+        stage_secs: u64,
+        #[arg(long, default_value_t = 60)]
+        warmup_secs: u64,
+        /// Unix seconds when the warm-up starts (same value on every sender); 0 = in 5 s
+        #[arg(long, default_value_t = 0)]
+        start_at: u64,
+        #[arg(long)]
+        out: PathBuf,
+        /// Transparent transfer instead of ZkTransfer (privacy-off baseline)
+        #[arg(long)]
+        public: bool,
+        #[arg(long, default_value_t = 1)]
+        amount: u128,
+    },
+    /// BI: mint a public (transparent) balance to a party, for `bench --public`.
+    MintPublic {
+        #[arg(long)]
+        asset: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: u128,
+    },
     /// Submit the attacks the node can reject; print expected vs got.
     Negative {
         #[arg(long)]
@@ -230,6 +264,11 @@ fn run(cli: Cli) -> eyre::Result<Value> {
             let dir = audit_dir.unwrap_or_else(|| cli.wallet.clone());
             cmd::audit_cmd(&c, &asset, &dir)
         }
+        Sub::Bench { asset, to, stages, stage_secs, warmup_secs, start_at, out, public, amount } => rd_driver::bench::bench(
+            &c,
+            &rd_driver::bench::BenchArgs { asset: &asset, to: &to, stages: &stages, stage_secs, warmup_secs, start_at, out: &out, public, amount },
+        ),
+        Sub::MintPublic { asset, to, amount } => rd_driver::bench::mint_public(&c, &asset, &to, amount),
         Sub::Negative { asset, other_asset, to, amount, to_owner_tag, to_diversifier } => {
             cmd::negative(&c, &asset, &other_asset, &to, amount, to_owner_tag.as_deref(), to_diversifier.as_deref())
         }
