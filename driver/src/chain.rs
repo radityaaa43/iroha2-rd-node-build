@@ -37,7 +37,7 @@ pub struct Net {
 /// process, loaded, and removed. `domain` is only syntax-checked by the loader (account = key).
 pub fn connect(torii: &str, chain: &str, me: &Me) -> Result<Net> {
     let toml = format!(
-        "chain = \"{chain}\"\ntorii_url = \"{torii}\"\n[account]\ndomain = \"rd.universal\"\npublic_key = \"{}\"\nprivate_key = \"{}\"\n[transaction]\ntime_to_live_ms = 120000\nstatus_timeout_ms = 180000\nnonce = true\n",
+        "chain = \"{chain}\"\ntorii_url = \"{torii}\"\n[account]\ndomain = \"rd.universal\"\npublic_key = \"{}\"\nprivate_key = \"{}\"\n[transaction]\ntime_to_live_ms = 600000\nstatus_timeout_ms = 300000\nnonce = true\n",
         me.public_key, me.private_key
     );
     let path = std::env::temp_dir().join(format!("rd2-client-{}.toml", std::process::id()));
