@@ -1,26 +1,24 @@
 # rd2: RD/DFABI confidential driver (Iroha 2)
 
 Rust CLI and library (`rd_driver`, binary `rd2`) for the Iroha 2 track: party wallets, BI issuance, private
-transfer and unshield with real Halo2 v2 proofs, BI audit, and negative tests. Contract: [`../docs/spec-g2-g5.md`](../docs/spec-g2-g5.md).
-Recipe and upstream references: [`../docs/research/g2-confidential-transfer.md`](../docs/research/g2-confidential-transfer.md).
+transfer and unshield with real Halo2 v2 proofs, BI audit, and negative tests. Contract: `spec-g2-g5.md` (envelope v1, parties, asset ids) in the platform repo.
+
 
 ## Build and test
 
-The crate joins the upstream workspace as `crates/rd_driver` (dev: bind mount by `.work/dev-cargo.sh`; image: `build.sh`
-copies it in). Build and test in release mode only (proving is impractical in debug):
-
-```
-.work/dev-cargo.sh build --release -p rd_driver
-.work/dev-cargo.sh test  --release -p rd_driver          # unit + vectors + offline prover (a few minutes)
-```
+The crate is a member of the upstream workspace as `crates/rd_driver` (`ci/prepare-src.sh` copies `driver/` in). It is
+never built on a developer host: the `ci` workflow runs `cargo test --release -p rd_driver -p rd_genesis` on every push
+(release mode, proving is impractical in debug). Regenerate the vectors in CI-like conditions with
+`cargo test --release -p rd_driver --test envelope_vectors -- --ignored write_vectors`.
 
 Tests:
 
 | Test | What it proves |
 |---|---|
 | `src/envelope.rs` unit tests | round trip, layout lengths, binding mismatch, wrong key, tamper, malformed input |
-| `tests/envelope_vectors.rs` | `tests/vectors/envelope_v1.json` is what the code produces (S1 tests the node parser against it). Regenerate: `cargo test --release -p rd_driver --test envelope_vectors -- --ignored write_vectors` |
+| `tests/envelope_vectors.rs` | `tests/vectors/envelope_v1.json` is what the code produces (S1 tests the node parser against it). Regenerate with the command above |
 | `tests/offline_prover.rs` | no node: issue 250 to A, A sends 100 to B with change, B unshields 100. Real proofs, envelope in `OpenVerifyEnvelope.aux` (proof still verifies), recipient scan, BI audit clean, and BI detects a lying envelope, a missing envelope and a forged signer |
+| `tests/wallet_cli.rs` | keygen writes a loadable wallet, `parties.json` parsing (audit key choice, address, asset names), note selection |
 
 ## Commands
 

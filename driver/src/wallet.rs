@@ -63,7 +63,7 @@ impl Parties {
     }
 }
 
-/// One party's secret files (`.secrets/<party>/` layout of spec 1).
+/// One party's secret files (party wallet dir layout of the spec).
 pub struct Me {
     pub party: String,
     pub dir: PathBuf,
