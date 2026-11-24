@@ -129,6 +129,12 @@ enum Sub {
         /// Transparent transfer instead of ZkTransfer (privacy-off baseline)
         #[arg(long)]
         public: bool,
+        /// Open loop: tx/s per step from this sender, comma-separated (then --stages is ignored; needs --public or --log)
+        #[arg(long, value_delimiter = ',')]
+        rates: Vec<f64>,
+        /// Open loop with a `Log` instruction (ledger-only ceiling, benchmarks scenario `ledger`)
+        #[arg(long)]
+        log: bool,
         #[arg(long, default_value_t = 1)]
         amount: u128,
     },
@@ -264,10 +270,17 @@ fn run(cli: Cli) -> eyre::Result<Value> {
             let dir = audit_dir.unwrap_or_else(|| cli.wallet.clone());
             cmd::audit_cmd(&c, &asset, &dir)
         }
-        Sub::Bench { asset, to, stages, stage_secs, warmup_secs, start_at, out, public, amount } => rd_driver::bench::bench(
-            &c,
-            &rd_driver::bench::BenchArgs { asset: &asset, to: &to, stages: &stages, stage_secs, warmup_secs, start_at, out: &out, public, amount },
-        ),
+        Sub::Bench { asset, to, stages, stage_secs, warmup_secs, start_at, out, public, amount, rates, log } => {
+            let args = rd_driver::bench::BenchArgs { asset: &asset, to: &to, stages: &stages, stage_secs, warmup_secs, start_at, out: &out, public, amount };
+            if rates.is_empty() {
+                rd_driver::bench::bench(&c, &args)
+            } else if log || public {
+                let kind = if log { rd_driver::bench::OpenKind::Log } else { rd_driver::bench::OpenKind::Public };
+                rd_driver::bench::bench_open(&c, &args, &rates, kind)
+            } else {
+                Err(eyre::eyre!("--rates (open loop) needs --public or --log; confidential transfers stay closed loop"))
+            }
+        }
         Sub::MintPublic { asset, to, amount } => rd_driver::bench::mint_public(&c, &asset, &to, amount),
         Sub::Negative { asset, other_asset, to, amount, to_owner_tag, to_diversifier } => {
             cmd::negative(&c, &asset, &other_asset, &to, amount, to_owner_tag.as_deref(), to_diversifier.as_deref())
