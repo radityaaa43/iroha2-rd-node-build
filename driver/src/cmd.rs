@@ -32,15 +32,15 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    fn net(&self) -> Result<Net> {
+    pub fn net(&self) -> Result<Net> {
         chain::connect(&self.torii, &self.chain, &self.me)
     }
-    fn own_account(&self) -> Result<String> {
+    pub fn own_account(&self) -> Result<String> {
         Ok(chain::own_account(&self.me)?.to_string())
     }
 }
 
-fn recipient_address(c: &Ctx, to: &str, tag: Option<&str>, div: Option<&str>) -> Result<Address> {
+pub fn recipient_address(c: &Ctx, to: &str, tag: Option<&str>, div: Option<&str>) -> Result<Address> {
     match (tag, div) {
         (Some(t), Some(d)) => Ok(Address { owner_tag: wallet::h32(t)?, diversifier: wallet::h32(d)? }),
         (None, None) => c.parties.address(to),
@@ -48,7 +48,7 @@ fn recipient_address(c: &Ctx, to: &str, tag: Option<&str>, div: Option<&str>) ->
     }
 }
 
-fn attachment(proof: ProofBox, vk_name: &str) -> ProofAttachment {
+pub fn attachment(proof: ProofBox, vk_name: &str) -> ProofAttachment {
     ProofAttachment::new_ref("halo2/ipa".into(), proof, VerifyingKeyId::new("halo2/ipa", vk_name))
 }
 
@@ -142,11 +142,14 @@ pub fn issue(c: &Ctx, asset: &str, to: &str, amount: u128, reference: &str, tag:
 
 // ----- scan -------------------------------------------------------------------------------------
 
-fn synced(c: &Ctx, net: &Net, asset: &str) -> Result<(crate::events::Ledger, Vec<NoteRec>, Vec<Value>, Option<(bool, String, String)>)> {
+pub fn synced(c: &Ctx, net: &Net, asset: &str) -> Result<(crate::events::Ledger, Vec<NoteRec>, Vec<Value>, Option<(bool, String, String)>)> {
     let (ledger, root) = chain::sync(net, asset)?;
     let existing = wallet::load_notes(&c.me.notes_path());
-    let (notes, anomalies) = wallet::scan_notes(&ledger, &c.me, asset, &c.chain, existing);
-    wallet::save_notes(&c.me.notes_path(), &notes)?;
+    let (notes, anomalies) = wallet::scan_notes(&ledger, &c.me, asset, &c.chain, existing.clone());
+    // notes.json holds every asset (RD and DFABI): rewrite only this asset's notes
+    let mut all: Vec<NoteRec> = existing.into_iter().filter(|n| n.asset != asset).collect();
+    all.extend(notes.iter().cloned());
+    wallet::save_notes(&c.me.notes_path(), &all)?;
     Ok((ledger, notes, anomalies, root))
 }
 
@@ -171,25 +174,30 @@ pub fn scan(c: &Ctx, asset: &str) -> Result<Value> {
 
 // ----- transfer ---------------------------------------------------------------------------------
 
-fn unspent(notes: &[NoteRec]) -> Vec<NoteRec> {
+pub fn unspent(notes: &[NoteRec]) -> Vec<NoteRec> {
     notes.iter().filter(|n| !n.spent && n.leaf_index.is_some()).cloned().collect()
 }
 
-fn zk_transfer(asset: &str, b: &BuiltTransfer, aux: Option<&[u8]>, root: Bytes32, inputs: Vec<Bytes32>) -> Result<InstructionBox> {
+/// A `ZkTransfer` over `b`; `aux` (the envelope) goes into the proof's `OpenVerifyEnvelope.aux`.
+pub fn zk_leg(asset: &str, b: &BuiltTransfer, aux: Option<&[u8]>, root: Bytes32, inputs: Vec<Bytes32>) -> Result<ZkTransfer> {
     let mut proof = b.proof.clone();
     if let Some(a) = aux {
         proto::set_aux(&mut proof, a)?;
     }
-    Ok(ZkTransfer::new(chain::asset_def(asset)?, inputs, b.outputs.clone(), attachment(proof, "vk_transfer"), Some(root)).into())
+    Ok(ZkTransfer::new(chain::asset_def(asset)?, inputs, b.outputs.clone(), attachment(proof, "vk_transfer"), Some(root)))
 }
 
-struct Prepared {
-    built: BuiltTransfer,
-    inputs: Vec<NoteRec>,
-    prove_ms: u128,
+fn zk_transfer(asset: &str, b: &BuiltTransfer, aux: Option<&[u8]>, root: Bytes32, inputs: Vec<Bytes32>) -> Result<InstructionBox> {
+    Ok(zk_leg(asset, b, aux, root, inputs)?.into())
 }
 
-fn prepare_transfer(c: &Ctx, asset: &str, notes: &[NoteRec], ledger: &crate::events::Ledger, to: &str, addr: Address, amount: u128) -> Result<Prepared> {
+pub struct Prepared {
+    pub built: BuiltTransfer,
+    pub inputs: Vec<NoteRec>,
+    pub prove_ms: u128,
+}
+
+pub fn prepare_transfer(c: &Ctx, asset: &str, notes: &[NoteRec], ledger: &crate::events::Ledger, to: &str, addr: Address, amount: u128) -> Result<Prepared> {
     let pool = unspent(notes);
     let idx = proto::select(&pool, NoteRec::amount, amount).ok_or_else(|| eyre!("not enough spendable notes for {amount} (max 2 inputs)"))?;
     let inputs: Vec<NoteRec> = idx.iter().map(|i| pool[*i].clone()).collect();
@@ -204,7 +212,7 @@ fn prepare_transfer(c: &Ctx, asset: &str, notes: &[NoteRec], ledger: &crate::eve
     Ok(Prepared { built, inputs, prove_ms: t.elapsed().as_millis() })
 }
 
-fn seal_transfer(c: &Ctx, asset: &str, b: &BuiltTransfer, to: &str, reference: &str) -> Result<Envelope> {
+pub fn seal_transfer(c: &Ctx, asset: &str, b: &BuiltTransfer, to: &str, reference: &str) -> Result<Envelope> {
     let pt = proto::plaintext("transfer", asset, &c.own_account()?, reference, &b.nullifiers, &b.notes, None);
     let ctx = BindingCtx { asset, inputs: &b.nullifiers, outputs: &b.outputs, public_amount: 0 };
     let (ver, bi_pk) = c.parties.audit_key()?;

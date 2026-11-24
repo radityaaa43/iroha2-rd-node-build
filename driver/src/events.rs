@@ -41,6 +41,9 @@ pub struct Event {
     pub root_hint: Option<Bytes32>,
     /// Raw `RdEnvelopeV1` bytes if the carrier held something.
     pub envelope: Option<Vec<u8>>,
+    /// ConfidentialDvp legs: the two intent signers (display form). Either may be the sender of its leg; the
+    /// transaction authority is only one of them. Empty for every other instruction.
+    pub signers: Vec<String>,
     /// Index of the first leaf this instruction appended (set by `Ledger::push`).
     pub leaf_start: usize,
 }

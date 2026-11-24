@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{fs, path::{Path, PathBuf}};
 
 use clap::{Parser, Subcommand};
 use rd_driver::{
     cmd::{self, Ctx},
+    dvp::{self, AwardArgs, AwardFile, ProposeArgs},
     wallet::{Me, Parties},
 };
 use serde_json::Value;
@@ -96,6 +97,16 @@ enum Sub {
         #[arg(long)]
         audit_dir: Option<PathBuf>,
     },
+    /// Two-party confidential DvP (fork patch P3): propose, each party `leg` and `sign`, one `submit`.
+    Dvp {
+        #[command(subcommand)]
+        cmd: DvpCmd,
+    },
+    /// BI: sign the award record of a UC-03 trade.
+    Award {
+        #[command(subcommand)]
+        cmd: AwardCmd,
+    },
     /// Submit the attacks the node can reject; print expected vs got.
     Negative {
         #[arg(long)]
@@ -112,6 +123,85 @@ enum Sub {
         #[arg(long)]
         to_diversifier: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum DvpCmd {
+    /// Write a new trade file (no keys, no network).
+    Propose {
+        /// 32 bytes hex, or `auto`
+        #[arg(long)]
+        trade_id: String,
+        #[arg(long)]
+        deliver_asset: String,
+        #[arg(long)]
+        deliver_amount: u128,
+        #[arg(long)]
+        pay_asset: String,
+        #[arg(long)]
+        pay_amount: u128,
+        /// Delivers the DFABI, receives the RD
+        #[arg(long)]
+        seller: String,
+        /// Pays the RD, receives the DFABI
+        #[arg(long)]
+        buyer: String,
+        #[arg(long)]
+        expiry_height: u64,
+        /// interbank | award (default: award if --award is given, else interbank)
+        #[arg(long)]
+        kind: Option<String>,
+        /// award.json from `rd2 award sign`
+        #[arg(long)]
+        award: Option<PathBuf>,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Prove my leg (seller: delivery, buyer: payment) and write it into the trade file.
+    Leg {
+        #[arg(long)]
+        trade: PathBuf,
+    },
+    /// Check the other leg, then sign the settlement digest with my account key and add my intent.
+    Sign {
+        #[arg(long)]
+        trade: PathBuf,
+    },
+    /// Submit the ConfidentialDvp (both legs and both intents present), wait for the result.
+    Submit {
+        #[arg(long)]
+        trade: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AwardCmd {
+    /// Sign an award record with the BI account key.
+    Sign {
+        /// 32 bytes hex, or `auto`
+        #[arg(long)]
+        award_id: String,
+        #[arg(long)]
+        winner: String,
+        #[arg(long)]
+        instrument: String,
+        #[arg(long)]
+        quantity: u128,
+        #[arg(long)]
+        consideration: u128,
+        #[arg(long)]
+        expiry_height: u64,
+        #[arg(long)]
+        out: PathBuf,
+    },
+}
+
+fn write_json<T: serde::Serialize>(p: &Path, v: &T) -> eyre::Result<()> {
+    Ok(fs::write(p, serde_json::to_vec_pretty(v)?)?)
+}
+
+fn id32(s: &str) -> eyre::Result<[u8; 32]> {
+    if s == "auto" { Ok(rd_driver::proto::rand32()) } else { rd_driver::wallet::h32(s) }
 }
 
 fn run(cli: Cli) -> eyre::Result<Value> {
@@ -142,6 +232,39 @@ fn run(cli: Cli) -> eyre::Result<Value> {
         }
         Sub::Negative { asset, other_asset, to, amount, to_owner_tag, to_diversifier } => {
             cmd::negative(&c, &asset, &other_asset, &to, amount, to_owner_tag.as_deref(), to_diversifier.as_deref())
+        }
+        Sub::Dvp { cmd } => match cmd {
+            DvpCmd::Propose { trade_id, deliver_asset, deliver_amount, pay_asset, pay_amount, seller, buyer, expiry_height, kind, award, out } => {
+                let award = award.map(|p| -> eyre::Result<AwardFile> { Ok(serde_json::from_slice(&fs::read(p)?)?) }).transpose()?;
+                let t = dvp::propose(
+                    &c,
+                    &ProposeArgs {
+                        trade_id: &trade_id,
+                        deliver_asset: &deliver_asset,
+                        deliver_amount,
+                        pay_asset: &pay_asset,
+                        pay_amount,
+                        seller: &seller,
+                        buyer: &buyer,
+                        expiry_height,
+                        kind: kind.as_deref(),
+                        award,
+                    },
+                )?;
+                t.save(&out)?;
+                Ok(serde_json::json!({"cmd": "dvp propose", "trade_id": t.trade_id, "kind": t.kind, "out": out}))
+            }
+            DvpCmd::Leg { trade } => dvp::leg(&c, &trade),
+            DvpCmd::Sign { trade } => dvp::sign(&c, &trade),
+            DvpCmd::Submit { trade } => dvp::submit(&c, &trade),
+        },
+        Sub::Award { cmd: AwardCmd::Sign { award_id, winner, instrument, quantity, consideration, expiry_height, out } } => {
+            let a = dvp::award_sign(
+                &c,
+                &AwardArgs { award_id: id32(&award_id)?, winner: &winner, instrument: &instrument, quantity, consideration, expiry_height },
+            )?;
+            write_json(&out, &a)?;
+            Ok(serde_json::json!({"cmd": "award sign", "award_id": a.award_id, "winner": a.winner_party, "out": out}))
         }
         Sub::Keygen { .. } | Sub::Address => unreachable!(),
     }

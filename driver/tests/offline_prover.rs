@@ -47,6 +47,7 @@ fn ev(block: u64, kind: Kind, authority: &str, from: Option<&str>, inputs: Vec<B
         public_amount,
         root_hint: None,
         envelope,
+        signers: vec![],
         leaf_start: 0,
     }
 }

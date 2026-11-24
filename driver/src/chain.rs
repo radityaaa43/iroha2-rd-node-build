@@ -13,7 +13,7 @@ use iroha_data_model::{
     block::SignedBlock,
     isi::{
         Instruction, InstructionBox,
-        zk::{Shield, Unshield, ZkTransfer},
+        zk::{ConfidentialDvp, Shield, Unshield, ZkTransfer},
     },
     metadata::Metadata,
     name::Name,
@@ -74,6 +74,7 @@ fn to_event(block: u64, tx: &iroha_data_model::transaction::SignedTransaction, i
         public_amount,
         root_hint,
         envelope,
+        signers: vec![],
         leaf_start: 0,
     };
     let any = ins.as_any();
@@ -93,6 +94,13 @@ fn to_event(block: u64, tx: &iroha_data_model::transaction::SignedTransaction, i
             return None;
         }
         return Some(base(Kind::Transfer, None, t.inputs.clone(), t.outputs.clone(), 0, t.root_hint, proto::get_aux(&t.proof.proof)));
+    }
+    if let Some(d) = any.downcast_ref::<ConfidentialDvp>() {
+        // the two legs have different assets (node rule), so at most one matches; it behaves like a ZkTransfer
+        let leg = [&d.delivery, &d.payment].into_iter().find(|l| l.asset == *asset)?;
+        let mut ev = base(Kind::Transfer, None, leg.inputs.clone(), leg.outputs.clone(), 0, leg.root_hint, proto::get_aux(&leg.proof.proof));
+        ev.signers = d.intents.iter().map(|i| i.signer.to_string()).collect();
+        return Some(ev);
     }
     if let Some(u) = any.downcast_ref::<Unshield>() {
         if u.asset != *asset {

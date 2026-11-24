@@ -2,6 +2,7 @@
 pub mod audit;
 pub mod chain;
 pub mod cmd;
+pub mod dvp;
 pub mod envelope;
 pub mod events;
 pub mod proto;

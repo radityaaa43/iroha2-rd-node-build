@@ -75,7 +75,9 @@ fn check(ev: &Event, keys: &AuditKeys, pool: &mut Pool, issued: &mut u128, unshi
     if p.kind != ev.kind.as_str() {
         viol(&mut v, "kind_mismatch", format!("plaintext {} vs instruction {}", p.kind, ev.kind.as_str()));
     }
-    if p.sender != ev.authority {
+    // A ConfidentialDvp leg may be sent by the other signer, not the transaction authority.
+    let sender = if ev.signers.contains(&p.sender) { p.sender.clone() } else { ev.authority.clone() };
+    if p.sender != sender {
         viol(&mut v, "sender_mismatch", format!("plaintext {} vs signer {}", p.sender, ev.authority));
     }
     if let Some(from) = &ev.from {
@@ -138,11 +140,11 @@ fn check(ev: &Event, keys: &AuditKeys, pool: &mut Pool, issued: &mut u128, unshi
         }
         Kind::Transfer | Kind::Unshield => {
             let need = sum_out.saturating_add(ev.public_amount);
-            if !pool.take(&ev.authority, ev.inputs.len(), need) {
+            if !pool.take(&sender, ev.inputs.len(), need) {
                 viol(
                     &mut v,
                     "conservation_unmatched_inputs",
-                    format!("no {} earlier note(s) of {} sum to {need}", ev.inputs.len(), ev.authority),
+                    format!("no {} earlier note(s) of {} sum to {need}", ev.inputs.len(), sender),
                 );
             }
             if ev.kind == Kind::Unshield {

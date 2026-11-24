@@ -18,6 +18,7 @@ Tests:
 | `src/envelope.rs` unit tests | round trip, layout lengths, binding mismatch, wrong key, tamper, malformed input |
 | `tests/envelope_vectors.rs` | `tests/vectors/envelope_v1.json` is what the code produces (S1 tests the node parser against it). Regenerate with the command above |
 | `tests/offline_prover.rs` | no node: issue 250 to A, A sends 100 to B with change, B unshields 100. Real proofs, envelope in `OpenVerifyEnvelope.aux` (proof still verifies), recipient scan, BI audit clean, and BI detects a lying envelope, a missing envelope and a forged signer |
+| `tests/offline_dvp.rs` | no node: the two-party `dvp` flow through trade.json for UC-06 (interbank) and UC-03 (award, BI delivers DFABI it shielded to itself). Real proofs for both legs, intents verify over the spec 4b tuple (hand-built preimage), a mutated leg, id, expiry or chain breaks the digest, award signature verifies and a changed field breaks it, BI audit of both legs is clean |
 | `tests/wallet_cli.rs` | keygen writes a loadable wallet, `parties.json` parsing (audit key choice, address, asset names), note selection |
 
 ## Commands
@@ -34,6 +35,11 @@ Every command prints one line `result_json=<json>`; on failure `result_json={"er
 | `transfer --asset rd --to bank-b --amount N` | bank | scans, selects 1-2 notes, proves, builds `ZkTransfer` (recipient output, then change), envelope in `aux`, submits, waits |
 | `unshield --asset rd --amount N [--to party]` | bank | exits whole notes (v2 has no change output, so `N` must equal the sum of 1-2 notes) |
 | `audit --asset rd [--asset dfabi_2026_01]` | BI | decrypts every envelope with `audit-v<N>.json`, recomputes commitments, checks conservation and supply, prints detected violations |
+| `dvp propose --trade-id <hex32\|auto> --deliver-asset dfabi_2026_01 --deliver-amount Q --pay-asset rd --pay-amount P --seller <party> --buyer <party> --expiry-height H [--kind interbank\|award] [--award award.json] --out trade.json` | either | writes the trade file; no keys, no node. `seller` delivers the DFABI and is paid in RD |
+| `dvp leg --trade trade.json` | seller, then or before buyer | scans, proves my leg (seller: delivery in `deliver-asset`, buyer: payment in `pay-asset`) with the counterparty as recipient and the BI envelope in `aux`, writes it into the trade file; my change note goes into `notes.json` at once |
+| `dvp sign --trade trade.json` | seller and buyer, each | needs both legs. Checks the other party's leg (proof verifies, envelope binds, decrypts for me, pays me exactly the agreed amount in recomputable notes), then signs the spec 4b digest with my account key and appends the intent |
+| `dvp submit --trade trade.json` | seller or buyer | needs both intents; verifies them, submits one `ConfidentialDvp` (my account is the transaction authority), waits, prints the tx hash or the node's `rd-dvp:` error |
+| `award sign --award-id <hex32\|auto> --winner <party> --instrument dfabi_2026_01 --quantity Q --consideration P --expiry-height H --out award.json` | BI | signs the UC-03 award record with the `bi` account key (the node wants the owner of domain `rd`) |
 | `negative --asset rd --other-asset dfabi_2026_01 --to bank-b` | bank | submits the attacks below and prints `expected` vs `got` per case |
 
 `negative` builds one valid proof and mutates it, so it needs one unspent note (and one spent note for the replay case):
@@ -50,6 +56,34 @@ Every command prints one line `result_json=<json>`; on failure `result_json={"er
 
 On a node without P2 the last two are accepted (and consume the note), so they run last. TC-CRYP-01 and -03 (inflated
 output, wrong owner) need the unchecked builder from the upstream patch in the research note and are not in the driver.
+
+## DvP flows (fork patch P3, spec 4b)
+
+Each party only ever uses its own keys; the only thing exchanged is `trade.json` (legs are public instruction data, amounts
+stay in proofs and envelopes). One DvP per trade id; an expired or failed DvP leaves everything untouched (nothing is locked:
+a party that spends its input note elsewhere makes the DvP fail).
+
+`trade.json` (`v: 1`): `trade_id`, `kind`, `chain`, `expiry_height`, `seller`, `buyer`, `deliver {asset, amount}`, `pay {asset, amount}`,
+`award` (award.json content or null), `delivery_leg` and `payment_leg` (`{by, asset, inputs[], outputs[], root, proof}`, `proof` = hex of the
+`OpenVerifyEnvelope` bytes, envelope inside), `intents[]` (`{party, signer, signature}`; signature over the 32 digest bytes).
+`award.json`: `{v, chain, award_id, winner_party, winner, instrument, quantity, consideration, expiry_height, bi_signature}`.
+
+**UC-02 first** (DFABI to the BI treasury), as BI: `rd2 issue --asset dfabi_2026_01 --to bi --amount N`. Needs `bi` `address` and `view_pk` in
+`parties.json` (`rd2 address`). Banks need RD notes (`issue --asset rd --to bank-x`).
+
+**UC-03 award (BI delivers DFABI to the winner, the winner pays RD to BI)**, winner `bank-a`:
+1. BI: `award sign --award-id auto --winner bank-a --instrument dfabi_2026_01 --quantity Q --consideration P --expiry-height H --out award.json`
+2. BI: `dvp propose --trade-id auto --deliver-asset dfabi_2026_01 --deliver-amount Q --pay-asset rd --pay-amount P --seller bi --buyer bank-a --expiry-height H --award award.json --out trade.json`; send `trade.json` to bank-a.
+3. BI and bank-a, either order: `dvp leg --trade trade.json` (pass the file along between the two).
+4. BI and bank-a: `dvp sign --trade trade.json` (each checks the other leg first).
+5. Either: `dvp submit --trade trade.json`. Then both `scan` both assets; BI `audit --asset rd --asset dfabi_2026_01`.
+
+**UC-06 interbank (bank-a delivers DFABI to bank-b, bank-b pays RD to bank-a)**: step 2 with `--seller bank-a --buyer bank-b` and no `--award`
+(`--kind interbank` is the default), then steps 3 to 5. `expiry-height` must be at or above the block height at submit time.
+
+Rules the node applies (all errors start with `rd-dvp:`): expiry, unused trade id, the two assets differ and both carry `rd_disclosure = "required"`,
+two different registered signers one of whom submits, both intents verify, `award`: BI signs the award, the BI account is a signer, the winner is a signer,
+instrument is the delivery asset, award not expired or reused. Each leg then runs the stock `ZkTransfer` path (P2 envelope and proof checks).
 
 ## Files
 
@@ -82,4 +116,5 @@ output, wrong owner) need the unchecked builder from the upstream patch in the r
 4. The leaf list is replayed from the blocks WebSocket stream (`/v1/confidential/notes` omits the envelope and, per research, Unshield change).
 5. The VK used for proving is regenerated locally (deterministic); `scan` reports whether it matches the registered one. Not yet confirmed against a live node.
 6. Unshield v2 only: whole-note exits, no change.
-7. Client config: the loader needs an account domain; `rd.universal` is written and is only syntax-checked.
+7. DvP: `kind` and `award` are not inside the signed tuple (node patch gap, planned v2 tuple); amounts of the legs are hidden, so each party relies on `sign`'s check of the other leg's envelope (the sender could still lie to BI in the envelope it encrypts to BI: `audit` detects that). `dvp leg` writes my change note to `notes.json` before the DvP commits, `scan` binds it to its leaf afterwards (a failed DvP leaves a harmless unbound note). `scan` and `audit` replay `ConfidentialDvp` legs as transfers; BI audit accepts either signer as the sender of a leg. `notes.json` now keeps notes of all assets (a scan of one asset used to drop the other's).
+8. Client config: the loader needs an account domain; `rd.universal` is written and is only syntax-checked.
